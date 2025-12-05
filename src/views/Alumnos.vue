@@ -92,25 +92,45 @@
               <div class="field">
                 <label class="label">Nombre</label>
                 <div class="control">
-                  <input v-model="form.nombre" class="input" type="text" required />
+                  <input v-model="form.nombre" class="input" type="text" required :readonly="nameLocked" />
                 </div>
+                <p v-if="nameLocked" class="help is-success">Nombre bloqueado desde RENIEC</p>
               </div>
             </div>
             <div class="column">
               <div class="field">
                 <label class="label">Apellido</label>
                 <div class="control">
-                  <input v-model="form.apellido" class="input" type="text" required />
+                  <input v-model="form.apellido" class="input" type="text" required :readonly="nameLocked" />
                 </div>
+                <p v-if="nameLocked" class="help is-success">Apellidos bloqueados desde RENIEC</p>
               </div>
             </div>
           </div>
 
           <div class="field">
             <label class="label">DNI</label>
-            <div class="control">
-              <input v-model="form.dni" class="input" type="text" placeholder="Ej: 12345678" />
+            <div class="field has-addons">
+              <div class="control is-expanded">
+                <input
+                  v-model="form.dni"
+                  class="input"
+                  type="text"
+                  placeholder="Ej: 12345678"
+                  maxlength="8"
+                  inputmode="numeric"
+                  pattern="\\d*"
+                />
+              </div>
+              <div class="control">
+                <button class="button is-info" type="button" @click="fetchReniecData" :class="{ 'is-loading': reniecLoading }">
+                  Buscar DNI
+                </button>
+              </div>
             </div>
+            <p class="help">Completa nombres automáticamente consultando RENIEC.</p>
+            <p v-if="reniecNotice" class="help is-success">{{ reniecNotice }}</p>
+            <p v-if="reniecError" class="help is-danger">{{ reniecError }}</p>
           </div>
 
           <div class="field">
@@ -162,6 +182,7 @@
 import { ref, onMounted } from 'vue'
 import { supabase } from '@/config/supabase'
 import { emailService } from '@/services/email'
+import { reniecService } from '@/services/reniec'
 
 const alumnos = ref([])
 const loading = ref(true)
@@ -170,6 +191,10 @@ const editingAlumno = ref(null)
 const saving = ref(false)
 const error = ref('')
 const success = ref('')
+const nameLocked = ref(false)
+const reniecLoading = ref(false)
+const reniecNotice = ref('')
+const reniecError = ref('')
 
 const form = ref({
   nombre: '',
@@ -220,6 +245,9 @@ const editAlumno = (alumno) => {
     email: alumno.email,
     grado: alumno.grado
   }
+  nameLocked.value = false
+  reniecNotice.value = ''
+  reniecError.value = ''
   showModal.value = true
 }
 
@@ -254,6 +282,7 @@ const saveAlumno = async () => {
   saving.value = true
   error.value = ''
   success.value = ''
+  reniecError.value = ''
 
   try {
     if (editingAlumno.value) {
@@ -362,9 +391,39 @@ const closeModal = () => {
   }
   error.value = ''
   success.value = ''
+  nameLocked.value = false
+  reniecNotice.value = ''
+  reniecError.value = ''
 }
 
 onMounted(() => {
   loadAlumnos()
 })
+
+// Consultar RENIEC para autocompletar nombres/apellidos
+const fetchReniecData = async () => {
+  reniecLoading.value = true
+  reniecError.value = ''
+  reniecNotice.value = ''
+
+  try {
+    const { success, data, error: reniecErr } = await reniecService.fetchByDni(form.value.dni)
+
+    if (!success) {
+      reniecError.value = reniecErr || 'No se encontraron datos para el DNI ingresado.'
+      nameLocked.value = false
+      return
+    }
+
+    form.value.nombre = (data.first_name || '').trim()
+    form.value.apellido = [data.first_last_name, data.second_last_name].filter(Boolean).join(' ').trim()
+    nameLocked.value = true
+    reniecNotice.value = 'Datos completados automáticamente desde RENIEC.'
+  } catch (err) {
+    reniecError.value = err.message || 'Error al consultar RENIEC.'
+    nameLocked.value = false
+  } finally {
+    reniecLoading.value = false
+  }
+}
 </script>
