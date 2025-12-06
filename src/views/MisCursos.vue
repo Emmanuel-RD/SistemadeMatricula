@@ -23,11 +23,13 @@
           </div>
           <div class="card-content">
             <div class="content">
+              <p><strong>Período:</strong> <span class="tag is-light is-info">{{ curso.periodo }}</span></p>
               <p><strong>Grado:</strong> <span class="tag is-info">{{ curso.grado }}° Grado</span></p>
               <p><strong>Docente:</strong> {{ curso.docente_nombre }}</p>
               <p><strong>Horario:</strong> {{ curso.dia_semana }} de {{ curso.hora_inicio }} a {{ curso.hora_fin }}</p>
               <p v-if="curso.descripcion"><strong>Descripción:</strong> {{ curso.descripcion }}</p>
               <p><strong>Fecha de Matrícula:</strong> {{ formatDate(curso.fecha_matricula) }}</p>
+              <p v-if="curso.observaciones"><strong>Observaciones:</strong> {{ curso.observaciones }}</p>
             </div>
           </div>
         </div>
@@ -59,10 +61,9 @@ const loadMisCursos = async () => {
     }
 
     const { data, error: err } = await supabase
-      .from('matriculas')
+      .from('matricula_cursos')
       .select(`
         id,
-        fecha_matricula,
         cursos (
           id,
           nombre,
@@ -72,24 +73,35 @@ const loadMisCursos = async () => {
           hora_inicio,
           hora_fin,
           docentes (nombre, apellido)
+        ),
+        matriculas_periodo!inner (
+          fecha_matricula,
+          alumno_id,
+          observaciones,
+          periodos (nombre, anio)
         )
       `)
-      .eq('alumno_id', alumnoData.id)
-      .order('fecha_matricula', { ascending: false })
+      .eq('matriculas_periodo.alumno_id', alumnoData.id)
+      .order('matriculas_periodo.fecha_matricula', { ascending: false })
 
     if (err) throw err
 
-    misCursos.value = (data || []).map(m => ({
-      id: m.cursos.id,
-      nombre: m.cursos.nombre,
-      descripcion: m.cursos.descripcion,
-      grado: m.cursos.grado,
-      dia_semana: m.cursos.dia_semana,
-      hora_inicio: m.cursos.hora_inicio,
-      hora_fin: m.cursos.hora_fin,
-      docente_nombre: m.cursos.docentes ? `${m.cursos.docentes.nombre} ${m.cursos.docentes.apellido}` : null,
-      fecha_matricula: m.fecha_matricula
-    }))
+    misCursos.value =
+      (data || []).map((m) => ({
+        id: m.cursos.id,
+        nombre: m.cursos.nombre,
+        descripcion: m.cursos.descripcion,
+        grado: m.cursos.grado,
+        dia_semana: m.cursos.dia_semana,
+        hora_inicio: m.cursos.hora_inicio,
+        hora_fin: m.cursos.hora_fin,
+        docente_nombre: m.cursos.docentes ? `${m.cursos.docentes.nombre} ${m.cursos.docentes.apellido}` : null,
+        fecha_matricula: m.matriculas_periodo?.fecha_matricula,
+        observaciones: m.matriculas_periodo?.observaciones || '',
+        periodo: m.matriculas_periodo?.periodos
+          ? `${m.matriculas_periodo.periodos.nombre} ${m.matriculas_periodo.periodos.anio}`
+          : 'Sin período'
+      })) || []
   } catch (err) {
     console.error('Error loading mis cursos:', err)
   } finally {
@@ -111,10 +123,3 @@ onMounted(() => {
   loadMisCursos()
 })
 </script>
-
-
-
-
-
-
-

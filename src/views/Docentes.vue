@@ -31,6 +31,26 @@
 
     <div class="card">
       <div class="card-content">
+        <div class="level mb-4">
+          <div class="level-left"></div>
+          <div class="level-right">
+            <div class="field has-addons">
+              <div class="control">
+                <input
+                  class="input"
+                  type="text"
+                  placeholder="Buscar por nombre, apellido, email o teléfono"
+                  v-model="search"
+                />
+              </div>
+              <div class="control">
+                <button class="button" @click="search = ''" :disabled="!search">
+                  Limpiar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
         <div v-if="loading" class="has-text-centered py-5">
           <i class="fas fa-spinner fa-spin fa-2x"></i>
         </div>
@@ -48,7 +68,7 @@
               </tr>
             </thead>
             <tbody>
-              <tr v-for="docente in docentes" :key="docente.id">
+              <tr v-for="docente in filteredDocentes" :key="docente.id">
                 <td>{{ docente.id }}</td>
                 <td><strong>{{ docente.nombre }}</strong></td>
                 <td>{{ docente.apellido }}</td>
@@ -166,7 +186,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { supabase } from '@/config/supabase'
 import { emailService } from '@/services/email'
 import { reniecService } from '@/services/reniec'
@@ -182,6 +202,7 @@ const nameLocked = ref(false)
 const reniecLoading = ref(false)
 const reniecNotice = ref('')
 const reniecError = ref('')
+const search = ref('')
 
 const form = ref({
   nombre: '',
@@ -189,6 +210,17 @@ const form = ref({
   dni: '',
   email: '',
   telefono: ''
+})
+
+const filteredDocentes = computed(() => {
+  const term = search.value.trim().toLowerCase()
+  if (!term) return docentes.value
+  return docentes.value.filter(d =>
+    d.nombre.toLowerCase().includes(term) ||
+    d.apellido.toLowerCase().includes(term) ||
+    d.email.toLowerCase().includes(term) ||
+    (d.telefono || '').toLowerCase().includes(term)
+  )
 })
 
 const loadDocentes = async () => {

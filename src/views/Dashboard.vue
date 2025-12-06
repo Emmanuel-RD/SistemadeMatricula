@@ -70,7 +70,7 @@
                 </figure>
               </div>
               <div class="media-content">
-                <p class="heading">Total Matrículas</p>
+                <p class="heading">Total Matriculas</p>
                 <p class="title is-4">{{ stats.totalMatriculas }}</p>
               </div>
             </div>
@@ -85,7 +85,7 @@
           <div class="card-header">
             <p class="card-header-title">
               <i class="fas fa-chart-line mr-2"></i>
-              Cursos Más Populares
+              Cursos mas populares
             </p>
           </div>
           <div class="card-content">
@@ -109,7 +109,11 @@
                     </div>
                   </div>
                 </div>
-                <progress class="progress is-primary" :value="curso.total_matriculas" :max="stats.totalAlumnos"></progress>
+                <progress
+                  class="progress is-primary"
+                  :value="curso.total_matriculas"
+                  :max="Math.max(stats.totalAlumnos || 1, cursosPopulares[0]?.total_matriculas || 1)"
+                ></progress>
               </div>
             </div>
           </div>
@@ -121,7 +125,7 @@
           <div class="card-header">
             <p class="card-header-title">
               <i class="fas fa-calendar-check mr-2"></i>
-              Matrículas Recientes
+              Matriculas recientes
             </p>
           </div>
           <div class="card-content">
@@ -129,7 +133,7 @@
               <i class="fas fa-spinner fa-spin fa-2x"></i>
             </div>
             <div v-else-if="matriculasRecientes.length === 0" class="has-text-centered py-5">
-              <p class="has-text-grey">No hay matrículas recientes</p>
+              <p class="has-text-grey">No hay matriculas recientes</p>
             </div>
             <div v-else>
               <div v-for="matricula in matriculasRecientes" :key="matricula.id" class="box mb-2">
@@ -137,8 +141,11 @@
                   <div class="level-left">
                     <div>
                       <strong>{{ matricula.alumno_nombre }}</strong>
-                      <br>
-                      <small class="has-text-grey">{{ matricula.curso_nombre }}</small>
+                      <br />
+                      <small class="has-text-grey">{{ matricula.periodo_nombre }}</small>
+                      <div class="tags mt-2" v-if="matricula.cursos.length">
+                        <span v-for="curso in matricula.cursos" :key="curso" class="tag is-info is-light">{{ curso }}</span>
+                      </div>
                     </div>
                   </div>
                   <div class="level-right">
@@ -173,43 +180,33 @@ const loading = ref(true)
 
 const loadStats = async () => {
   try {
-    // Total cursos
-    const { count: cursosCount } = await supabase
-      .from('cursos')
-      .select('*', { count: 'exact', head: true })
+    const { count: cursosCount } = await supabase.from('cursos').select('*', { count: 'exact', head: true })
     stats.value.totalCursos = cursosCount || 0
 
-    // Total alumnos
-    const { count: alumnosCount } = await supabase
-      .from('alumnos')
-      .select('*', { count: 'exact', head: true })
+    const { count: alumnosCount } = await supabase.from('alumnos').select('*', { count: 'exact', head: true })
     stats.value.totalAlumnos = alumnosCount || 0
 
-    // Total docentes
-    const { count: docentesCount } = await supabase
-      .from('docentes')
-      .select('*', { count: 'exact', head: true })
+    const { count: docentesCount } = await supabase.from('docentes').select('*', { count: 'exact', head: true })
     stats.value.totalDocentes = docentesCount || 0
 
-    // Total matrículas
     const { count: matriculasCount } = await supabase
-      .from('matriculas')
+      .from('matriculas_periodo')
       .select('*', { count: 'exact', head: true })
     stats.value.totalMatriculas = matriculasCount || 0
 
-    // Cursos más populares
-    const { data: cursosData } = await supabase
-      .from('matriculas')
+    const { data: cursosData, error: cursosErr } = await supabase
+      .from('matricula_cursos')
       .select(`
         curso_id,
-        cursos (
-          id,
-          nombre
-        )
+        cursos (id, nombre),
+        matriculas_periodo!inner (estado)
       `)
+      .eq('matriculas_periodo.estado', 'activa')
+
+    if (cursosErr) throw cursosErr
 
     const cursoCounts = {}
-    cursosData?.forEach(m => {
+    ;(cursosData || []).forEach((m) => {
       const cursoId = m.curso_id
       const cursoNombre = m.cursos?.nombre || 'Sin nombre'
       if (!cursoCounts[cursoId]) {
@@ -222,25 +219,27 @@ const loadStats = async () => {
       .sort((a, b) => b.total_matriculas - a.total_matriculas)
       .slice(0, 5)
 
-    // Matrículas recientes
-    const { data: matriculasData } = await supabase
-      .from('matriculas')
+    const { data: matriculasData, error: matErr } = await supabase
+      .from('matriculas_periodo')
       .select(`
         id,
         fecha_matricula,
         alumnos (nombre, apellido),
-        cursos (nombre)
+        periodos (nombre, anio),
+        matricula_cursos (curso_nombre_snapshot)
       `)
       .order('fecha_matricula', { ascending: false })
       .limit(5)
 
-    matriculasRecientes.value = matriculasData?.map(m => ({
-      id: m.id,
-      alumno_nombre: `${m.alumnos?.nombre || ''} ${m.alumnos?.apellido || ''}`,
-      curso_nombre: m.cursos?.nombre || '',
-      fecha_matricula: m.fecha_matricula
-    })) || []
+    if (matErr) throw matErr
 
+    matriculasRecientes.value = (matriculasData || []).map((m) => ({
+      id: m.id,
+      alumno_nombre: `${m.alumnos?.nombre || ''} ${m.alumnos?.apellido || ''}`.trim(),
+      periodo_nombre: m.periodos ? `${m.periodos.nombre} ${m.periodos.anio}` : 'Sin periodo',
+      cursos: (m.matricula_cursos || []).map((c) => c.curso_nombre_snapshot),
+      fecha_matricula: m.fecha_matricula
+    }))
   } catch (error) {
     console.error('Error loading stats:', error)
   } finally {
@@ -262,10 +261,3 @@ onMounted(() => {
   loadStats()
 })
 </script>
-
-
-
-
-
-
-

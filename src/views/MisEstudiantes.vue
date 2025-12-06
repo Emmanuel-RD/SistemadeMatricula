@@ -36,6 +36,7 @@
                   <th>Apellido</th>
                   <th>Email</th>
                   <th>Grado</th>
+                  <th>Período</th>
                   <th>Fecha Matrícula</th>
                 </tr>
               </thead>
@@ -46,6 +47,9 @@
                   <td>{{ estudiante.email }}</td>
                   <td>
                     <span class="tag is-info">{{ estudiante.grado }}° Grado</span>
+                  </td>
+                  <td>
+                    <span class="tag is-light is-info">{{ estudiante.periodo || 'Sin período' }}</span>
                   </td>
                   <td>{{ formatDate(estudiante.fecha_matricula) }}</td>
                 </tr>
@@ -69,55 +73,80 @@ const loading = ref(true)
 
 const loadMisEstudiantes = async () => {
   try {
-    // Obtener el docente actual
-    const { data: docenteData } = await supabase
+    const { data: docenteData, error: docenteErr } = await supabase
       .from('docentes')
       .select('id')
       .eq('email', authStore.user.email)
       .single()
 
+    if (docenteErr) {
+      if (docenteErr.code === 'PGRST116') {
+        loading.value = false
+        return
+      }
+      throw docenteErr
+    }
     if (!docenteData) {
       loading.value = false
       return
     }
 
-    // Obtener cursos del docente
     const { data: cursosData, error: cursosErr } = await supabase
       .from('cursos')
-      .select('*')
+      .select(`
+        *,
+        docentes (nombre, apellido)
+      `)
       .eq('docente_id', docenteData.id)
+      .order('nombre')
 
     if (cursosErr) throw cursosErr
 
-    // Para cada curso, obtener los estudiantes
-    const cursosConEstudiantes = await Promise.all(
-      (cursosData || []).map(async (curso) => {
-        const { data: matriculasData } = await supabase
-          .from('matriculas')
-          .select(`
+    const cursoIds = (cursosData || []).map((c) => c.id)
+    let matriculasCurso = []
+
+    if (cursoIds.length > 0) {
+      const { data: mcData, error: mcErr } = await supabase
+        .from('matricula_cursos')
+        .select(`
+          id,
+          curso_id,
+          matriculas_periodo!inner (
             fecha_matricula,
-            alumnos (id, nombre, apellido, email, grado)
-          `)
-          .eq('curso_id', curso.id)
+            alumnos (id, nombre, apellido, email, grado),
+            periodos (nombre, anio)
+          )
+        `)
+        .in('curso_id', cursoIds)
 
-        const estudiantes = (matriculasData || []).map(m => ({
-          id: m.alumnos.id,
-          nombre: m.alumnos.nombre,
-          apellido: m.alumnos.apellido,
-          email: m.alumnos.email,
-          grado: m.alumnos.grado,
-          fecha_matricula: m.fecha_matricula
-        }))
+      if (mcErr) throw mcErr
+      matriculasCurso = mcData || []
+    }
 
-        return {
-          ...curso,
-          estudiantes,
-          total_estudiantes: estudiantes.length
-        }
+    const alumnosPorCurso = {}
+    matriculasCurso.forEach((mc) => {
+      const alumno = mc.matriculas_periodo?.alumnos
+      if (!alumno) return
+      if (!alumnosPorCurso[mc.curso_id]) alumnosPorCurso[mc.curso_id] = []
+      alumnosPorCurso[mc.curso_id].push({
+        id: alumno.id,
+        nombre: alumno.nombre,
+        apellido: alumno.apellido,
+        email: alumno.email,
+        grado: alumno.grado,
+        periodo: mc.matriculas_periodo?.periodos
+          ? `${mc.matriculas_periodo.periodos.nombre} ${mc.matriculas_periodo.periodos.anio}`
+          : '',
+        fecha_matricula: mc.matriculas_periodo?.fecha_matricula
       })
-    )
+    })
 
-    misCursos.value = cursosConEstudiantes
+    misCursos.value = (cursosData || []).map((curso) => ({
+      ...curso,
+      docente_nombre: curso.docentes ? `${curso.docentes.nombre} ${curso.docentes.apellido}` : null,
+      estudiantes: alumnosPorCurso[curso.id] || [],
+      total_estudiantes: alumnosPorCurso[curso.id]?.length || 0
+    }))
   } catch (err) {
     console.error('Error loading mis estudiantes:', err)
   } finally {
@@ -139,10 +168,3 @@ onMounted(() => {
   loadMisEstudiantes()
 })
 </script>
-
-
-
-
-
-
-

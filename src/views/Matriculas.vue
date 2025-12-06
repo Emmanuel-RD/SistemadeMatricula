@@ -26,6 +26,9 @@
 
     <div class="card">
       <div class="card-content">
+        <div v-if="periodosAbiertos.length === 0" class="notification is-warning is-light">
+          Debes crear y abrir un periodo antes de registrar matrículas. Ve a <strong>Periodos</strong> y actívalo.
+        </div>
         <div v-if="loading" class="has-text-centered py-5">
           <i class="fas fa-spinner fa-spin fa-2x"></i>
         </div>
@@ -35,7 +38,8 @@
               <tr>
                 <th>ID</th>
                 <th>Alumno</th>
-                <th>Curso</th>
+                <th>Período</th>
+                <th>Cursos</th>
                 <th>Grado</th>
                 <th>Fecha Matrícula</th>
                 <th>Estado</th>
@@ -46,13 +50,18 @@
               <tr v-for="matricula in matriculas" :key="matricula.id">
                 <td>{{ matricula.id }}</td>
                 <td><strong>{{ matricula.alumno_nombre }}</strong></td>
-                <td>{{ matricula.curso_nombre }}</td>
+                <td><span class="tag">{{ matricula.periodo_nombre }}</span></td>
                 <td>
-                  <span class="tag is-info">{{ matricula.grado }}° Grado</span>
+                  <ul>
+                    <li v-for="curso in matricula.cursos" :key="curso">{{ curso }}</li>
+                  </ul>
+                </td>
+                <td>
+                  <span class="tag is-info">{{ matricula.grado }}º Grado</span>
                 </td>
                 <td>{{ formatDate(matricula.fecha_matricula) }}</td>
                 <td>
-                  <span class="tag is-success">Activa</span>
+                  <span class="tag is-success">{{ matricula.estado }}</span>
                 </td>
                 <td v-if="authStore.isAdmin">
                   <button class="button is-small is-danger" @click="deleteMatricula(matricula.id)">
@@ -82,7 +91,7 @@
                 <select v-model="form.alumno_id" required>
                   <option value="">Seleccionar alumno</option>
                   <option v-for="alumno in alumnos" :key="alumno.id" :value="alumno.id">
-                    {{ alumno.nombre }} {{ alumno.apellido }} - {{ alumno.grado }}° Grado
+                    {{ alumno.nombre }} {{ alumno.apellido }} - {{ alumno.grado }}º Grado
                   </option>
                 </select>
               </div>
@@ -90,28 +99,57 @@
           </div>
 
           <div v-if="authStore.isAlumno && alumnoActual" class="notification is-info">
-            <p><strong>Alumno:</strong> {{ alumnoActual.nombre }} {{ alumnoActual.apellido }} - {{ alumnoActual.grado }}° Grado</p>
+            <p><strong>Alumno:</strong> {{ alumnoActual.nombre }} {{ alumnoActual.apellido }} - {{ alumnoActual.grado }}º Grado</p>
           </div>
 
           <div class="field">
-            <label class="label">Curso</label>
+            <label class="label">Período</label>
             <div class="control">
               <div class="select is-fullwidth">
-                <select v-model="form.curso_id" required @change="onCursoChange">
-                  <option value="">Seleccionar curso</option>
-                  <option v-for="curso in cursosDisponibles" :key="curso.id" :value="curso.id">
-                    {{ curso.nombre }} - {{ curso.grado }}° Grado - {{ curso.dia_semana }} {{ curso.hora_inicio }}-{{ curso.hora_fin }}
+                <select v-model="form.periodo_id" required>
+                  <option value="">Seleccionar período</option>
+                  <option v-for="periodo in periodosAbiertos" :key="periodo.id" :value="periodo.id">
+                    {{ periodo.nombre }} - {{ periodo.anio }} ({{ periodo.estado }})
                   </option>
                 </select>
               </div>
             </div>
-            <p v-if="authStore.isAlumno" class="help">Solo se muestran los cursos disponibles para tu grado</p>
+            <p class="help">Solo se puede matricular en períodos abiertos.</p>
           </div>
 
-          <div v-if="cursoSeleccionado" class="notification is-info">
-            <p><strong>Horario:</strong> {{ cursoSeleccionado.dia_semana }} de {{ cursoSeleccionado.hora_inicio }} a {{ cursoSeleccionado.hora_fin }}</p>
-            <p><strong>Docente:</strong> {{ cursoSeleccionado.docente_nombre }}</p>
-            <p><strong>Capacidad:</strong> {{ cursoSeleccionado.capacidad }} alumnos</p>
+          <div class="field">
+            <label class="label">Selecciona los cursos</label>
+            <div class="table-container" style="max-height: 280px; overflow: auto;">
+              <table class="table is-fullwidth is-hoverable is-size-7">
+                <thead>
+                  <tr>
+                    <th></th>
+                    <th>Curso</th>
+                    <th>Grado</th>
+                    <th>Horario</th>
+                    <th>Docente</th>
+                    <th>Capacidad</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="curso in cursosDisponibles" :key="curso.id">
+                    <td>
+                      <input type="checkbox" :value="curso.id" v-model="form.cursos_ids" />
+                    </td>
+                    <td>{{ curso.nombre }}</td>
+                    <td>{{ curso.grado }}º</td>
+                    <td>{{ curso.dia_semana }} {{ curso.hora_inicio }} - {{ curso.hora_fin }}</td>
+                    <td>{{ curso.docente_nombre || 'Sin docente' }}</td>
+                    <td>{{ curso.capacidad }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <p class="help" v-if="authStore.isAlumno">Solo ves cursos de tu grado.</p>
+          </div>
+
+          <div v-if="form.cursos_ids.length === 0" class="notification is-warning is-light">
+            Selecciona al menos un curso para la matrícula.
           </div>
 
           <div v-if="error" class="notification is-danger mt-3">
@@ -138,48 +176,44 @@ const authStore = useAuthStore()
 const matriculas = ref([])
 const alumnos = ref([])
 const cursos = ref([])
+const periodos = ref([])
 const loading = ref(true)
 const showModal = ref(false)
 const saving = ref(false)
 const error = ref('')
 const validationError = ref('')
-const cursoSeleccionado = ref(null)
 
 const form = ref({
   alumno_id: '',
-  curso_id: ''
+  periodo_id: '',
+  cursos_ids: []
 })
 
 const alumnoActual = ref(null)
 
 const cursosDisponibles = computed(() => {
-  // Si es alumno, usar el alumno actual
-  if (authStore.isAlumno && alumnoActual.value) {
-    return cursos.value.filter(c => c.grado === alumnoActual.value.grado)
-  }
-  
-  // Si es admin, filtrar por alumno seleccionado
-  if (!form.value.alumno_id) return cursos.value
-  
-  const alumno = alumnos.value.find(a => a.id === form.value.alumno_id)
-  if (!alumno) return cursos.value
-  
-  // Filtrar cursos por grado del alumno
-  return cursos.value.filter(c => c.grado === alumno.grado)
+  const grado = authStore.isAlumno
+    ? alumnoActual.value?.grado
+    : alumnos.value.find((a) => a.id === form.value.alumno_id)?.grado
+
+  if (!grado) return []
+  return cursos.value.filter((c) => c.grado === grado)
 })
+
+const periodosAbiertos = computed(() => periodos.value.filter((p) => p.estado === 'abierto'))
 
 const loadMatriculas = async () => {
   try {
     let query = supabase
-      .from('matriculas')
+      .from('matriculas_periodo')
       .select(`
         *,
         alumnos (id, nombre, apellido, grado),
-        cursos (id, nombre, grado)
+        periodos (nombre, anio),
+        matricula_cursos (curso_nombre_snapshot)
       `)
       .order('fecha_matricula', { ascending: false })
 
-    // Si es alumno, solo mostrar sus matrículas
     if (authStore.isAlumno) {
       const { data: alumnoData } = await supabase
         .from('alumnos')
@@ -193,15 +227,16 @@ const loadMatriculas = async () => {
     }
 
     const { data, error: err } = await query
-
     if (err) throw err
 
-    matriculas.value = (data || []).map(m => ({
+    matriculas.value = (data || []).map((m) => ({
       id: m.id,
       alumno_nombre: `${m.alumnos?.nombre || ''} ${m.alumnos?.apellido || ''}`,
-      curso_nombre: m.cursos?.nombre || '',
-      grado: m.alumnos?.grado || m.cursos?.grado || '',
-      fecha_matricula: m.fecha_matricula
+      periodo_nombre: m.periodos ? `${m.periodos.nombre} ${m.periodos.anio}` : 'Sin período',
+      grado: m.alumnos?.grado || '',
+      fecha_matricula: m.fecha_matricula,
+      estado: m.estado || 'activa',
+      cursos: (m.matricula_cursos || []).map((c) => c.curso_nombre_snapshot)
     }))
   } catch (err) {
     console.error('Error loading matriculas:', err)
@@ -215,7 +250,6 @@ const loadAlumnos = async () => {
   try {
     let query = supabase.from('alumnos').select('*').order('nombre')
 
-    // Si es alumno, solo cargar su propio registro
     if (authStore.isAlumno) {
       query = query.eq('email', authStore.user.email)
     }
@@ -224,7 +258,6 @@ const loadAlumnos = async () => {
     if (err) throw err
     alumnos.value = data || []
 
-    // Si es alumno, establecer su ID automáticamente y guardar datos del alumno
     if (authStore.isAlumno && alumnos.value.length > 0) {
       alumnoActual.value = alumnos.value[0]
       form.value.alumno_id = alumnos.value[0].id
@@ -246,7 +279,7 @@ const loadCursos = async () => {
 
     if (err) throw err
 
-    cursos.value = (data || []).map(curso => ({
+    cursos.value = (data || []).map((curso) => ({
       ...curso,
       docente_nombre: curso.docentes ? `${curso.docentes.nombre} ${curso.docentes.apellido}` : null
     }))
@@ -255,69 +288,74 @@ const loadCursos = async () => {
   }
 }
 
-const onCursoChange = () => {
-  cursoSeleccionado.value = cursos.value.find(c => c.id === form.value.curso_id) || null
+const loadPeriodos = async () => {
+  try {
+    const { data, error: err } = await supabase
+      .from('periodos')
+      .select('*')
+      .order('anio', { ascending: false })
+      .order('fecha_inicio', { ascending: false })
+
+    if (err) throw err
+    periodos.value = data || []
+  } catch (err) {
+    console.error('Error loading periodos:', err)
+  }
 }
 
 const validateMatricula = async () => {
-  if (!form.value.alumno_id || !form.value.curso_id) {
-    return { valid: false, error: 'Debe seleccionar alumno y curso' }
+  if (!form.value.alumno_id || !form.value.periodo_id) {
+    return { valid: false, error: 'Debe seleccionar alumno y período' }
+  }
+  if (!form.value.cursos_ids || form.value.cursos_ids.length === 0) {
+    return { valid: false, error: 'Seleccione al menos un curso' }
   }
 
-  const alumno = alumnos.value.find(a => a.id === form.value.alumno_id)
-  const curso = cursos.value.find(c => c.id === form.value.curso_id)
+  const alumno = alumnos.value.find((a) => a.id === form.value.alumno_id)
+  if (!alumno) return { valid: false, error: 'Alumno inválido' }
 
-  if (!alumno || !curso) {
-    return { valid: false, error: 'Datos inválidos' }
-  }
-
-  // Validación 1: No puede matricularse dos veces al mismo curso
-  const { data: existingMatricula } = await supabase
-    .from('matriculas')
-    .select('id')
-    .eq('alumno_id', form.value.alumno_id)
-    .eq('curso_id', form.value.curso_id)
-    .single()
-
-  if (existingMatricula) {
-    return { valid: false, error: 'El alumno ya está matriculado en este curso' }
-  }
-
-  // Validación 2: No puede matricularse en cursos que no correspondan a su grado
-  if (alumno.grado !== curso.grado) {
-    return { valid: false, error: `El alumno está en ${alumno.grado}° grado y el curso es para ${curso.grado}° grado` }
-  }
-
-  // Validación 3: No puede matricularse en cursos con el mismo horario
-  const { data: matriculasAlumno } = await supabase
-    .from('matriculas')
-    .select(`
-      cursos (dia_semana, hora_inicio, hora_fin)
-    `)
-    .eq('alumno_id', form.value.alumno_id)
-
-  if (matriculasAlumno) {
-    const conflictos = matriculasAlumno.filter(m => {
-      const cursoMatriculado = m.cursos
-      return cursoMatriculado &&
-        cursoMatriculado.dia_semana === curso.dia_semana &&
-        cursoMatriculado.hora_inicio === curso.hora_inicio &&
-        cursoMatriculado.hora_fin === curso.hora_fin
-    })
-
-    if (conflictos.length > 0) {
-      return { valid: false, error: 'El alumno ya tiene un curso en el mismo horario' }
-    }
-  }
-
-  // Validación 4: Verificar capacidad del curso
-  const { count: matriculasCount } = await supabase
-    .from('matriculas')
+  const { count: existeMatricula } = await supabase
+    .from('matriculas_periodo')
     .select('*', { count: 'exact', head: true })
-    .eq('curso_id', form.value.curso_id)
+    .eq('alumno_id', form.value.alumno_id)
+    .eq('periodo_id', form.value.periodo_id)
 
-  if (matriculasCount >= curso.capacidad) {
-    return { valid: false, error: 'El curso ha alcanzado su capacidad máxima' }
+  if (existeMatricula && existeMatricula > 0) {
+    return { valid: false, error: 'El alumno ya tiene una matrícula en este período' }
+  }
+
+  for (const cursoId of form.value.cursos_ids) {
+    const curso = cursos.value.find((c) => c.id === cursoId)
+    if (!curso) return { valid: false, error: 'Curso inválido' }
+    if (curso.grado !== alumno.grado) {
+      return { valid: false, error: `El curso ${curso.nombre} es para grado ${curso.grado} y el alumno está en ${alumno.grado}` }
+    }
+
+    // No permitir al alumno repetir el mismo curso (aunque sea otro período)
+    const { count: yaMatriculado, error: dupErr } = await supabase
+      .from('matricula_cursos')
+      .select('id, matriculas_periodo!inner (alumno_id)', { count: 'exact', head: true })
+      .eq('curso_id', cursoId)
+      .eq('matriculas_periodo.alumno_id', form.value.alumno_id)
+
+    if (dupErr) return { valid: false, error: dupErr.message }
+    if (yaMatriculado && yaMatriculado > 0) {
+      return { valid: false, error: `El alumno ya cursó ${curso.nombre}` }
+    }
+
+    const { data: mcData, error: mcErr } = await supabase
+      .from('matricula_cursos')
+      .select('id, matriculas_periodo!inner(periodo_id)')
+      .eq('curso_id', cursoId)
+
+    if (mcErr) return { valid: false, error: mcErr.message }
+
+    const inscritosPeriodo = (mcData || []).filter(
+      (mc) => mc.matriculas_periodo && mc.matriculas_periodo.periodo_id === form.value.periodo_id
+    ).length
+    if (inscritosPeriodo >= curso.capacidad) {
+      return { valid: false, error: `El curso ${curso.nombre} ha alcanzado su capacidad` }
+    }
   }
 
   return { valid: true }
@@ -336,15 +374,42 @@ const saveMatricula = async () => {
   }
 
   try {
-    const { error: err } = await supabase
-      .from('matriculas')
-      .insert([{
-        alumno_id: form.value.alumno_id,
-        curso_id: form.value.curso_id,
-        fecha_matricula: new Date().toISOString()
-      }])
+    const alumno = alumnos.value.find((a) => a.id === form.value.alumno_id)
+    const payloadMatricula = {
+      alumno_id: form.value.alumno_id,
+      periodo_id: form.value.periodo_id,
+      grado: alumno.grado,
+      fecha_matricula: new Date().toISOString(),
+      estado: 'activa'
+    }
 
-    if (err) throw err
+    const { data: matriculaInserted, error: errMat } = await supabase
+      .from('matriculas_periodo')
+      .insert([payloadMatricula])
+      .select('id')
+      .single()
+
+    if (errMat) throw errMat
+    const matriculaId = matriculaInserted.id
+
+    const cursosRows = form.value.cursos_ids.map((id) => {
+      const curso = cursos.value.find((c) => c.id === id)
+      return {
+        matricula_id: matriculaId,
+        curso_id: curso.id,
+        curso_nombre_snapshot: curso.nombre,
+        docente_id_snapshot: curso.docente_id || null,
+        docente_nombre_snapshot: curso.docente_nombre || null,
+        grado_snapshot: curso.grado,
+        dia_semana_snapshot: curso.dia_semana,
+        hora_inicio_snapshot: curso.hora_inicio,
+        hora_fin_snapshot: curso.hora_fin,
+        capacidad_snapshot: curso.capacidad
+      }
+    })
+
+    const { error: errCursos } = await supabase.from('matricula_cursos').insert(cursosRows)
+    if (errCursos) throw errCursos
 
     await loadMatriculas()
     closeModal()
@@ -359,11 +424,7 @@ const deleteMatricula = async (id) => {
   if (!confirm('¿Estás seguro de eliminar esta matrícula?')) return
 
   try {
-    const { error: err } = await supabase
-      .from('matriculas')
-      .delete()
-      .eq('id', id)
-
+    const { error: err } = await supabase.from('matriculas_periodo').delete().eq('id', id)
     if (err) throw err
     await loadMatriculas()
   } catch (err) {
@@ -385,16 +446,16 @@ const closeModal = () => {
   showModal.value = false
   form.value = {
     alumno_id: authStore.isAlumno && alumnoActual.value ? alumnoActual.value.id : '',
-    curso_id: ''
+    periodo_id: '',
+    cursos_ids: []
   }
-  cursoSeleccionado.value = null
   error.value = ''
 }
 
 onMounted(async () => {
   await loadAlumnos()
   await loadCursos()
+  await loadPeriodos()
   await loadMatriculas()
 })
 </script>
-

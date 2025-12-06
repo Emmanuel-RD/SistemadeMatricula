@@ -62,6 +62,9 @@
                   <span class="tag is-success">{{ alumno.total_cursos || 0 }}</span>
                 </td>
                 <td>
+                  <router-link class="button is-small" :to="`/alumnos/${alumno.id}`">
+                    <i class="fas fa-eye"></i>
+                  </router-link>
                   <button class="button is-small is-info" @click="editAlumno(alumno)">
                     <i class="fas fa-edit"></i>
                   </button>
@@ -159,6 +162,54 @@
             </div>
           </div>
 
+          <div class="columns">
+            <div class="column">
+              <div class="field">
+                <label class="label">Foto carnet (imagen)</label>
+                <div class="file has-name is-fullwidth">
+                  <label class="file-label">
+                    <input class="file-input" type="file" accept="image/*" @change="onFileChange($event, 'foto_carnet')" />
+                    <span class="file-cta">
+                      <span class="file-icon">
+                        <i class="fas fa-upload"></i>
+                      </span>
+                      <span class="file-label">Subir archivo</span>
+                    </span>
+                    <span class="file-name" v-if="fileNames.foto_carnet">{{ fileNames.foto_carnet }}</span>
+                  </label>
+                </div>
+                <p class="help">Obligatorio para el registro</p>
+                <figure v-if="form.foto_carnet" class="image mt-2" style="max-width: 200px;">
+                  <img :src="form.foto_carnet" alt="Foto carnet" />
+                </figure>
+              </div>
+            </div>
+            <div class="column">
+              <div class="field">
+                <label class="label">Constancia de estudios (imagen/PDF)</label>
+                <div class="file has-name is-fullwidth">
+                  <label class="file-label">
+                    <input class="file-input" type="file" accept="image/*,application/pdf" @change="onFileChange($event, 'constancia_estudios')" />
+                    <span class="file-cta">
+                      <span class="file-icon">
+                        <i class="fas fa-upload"></i>
+                      </span>
+                      <span class="file-label">Subir archivo</span>
+                    </span>
+                    <span class="file-name" v-if="fileNames.constancia_estudios">{{ fileNames.constancia_estudios }}</span>
+                  </label>
+                </div>
+                <p class="help">Obligatorio para el registro</p>
+                <figure v-if="isImage(form.constancia_estudios)" class="image mt-2" style="max-width: 200px;">
+                  <img :src="form.constancia_estudios" alt="Constancia de estudios" />
+                </figure>
+                <div v-else-if="form.constancia_estudios" class="mt-2">
+                  <a :href="form.constancia_estudios" target="_blank" rel="noopener">Ver constancia</a>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div v-if="error" class="notification is-danger mt-3">
             <button class="delete" @click="error = ''"></button>
             {{ error }}
@@ -177,6 +228,7 @@
       </div>
     </div>
   </div>
+
 </template>
 
 <script setup>
@@ -196,13 +248,19 @@ const nameLocked = ref(false)
 const reniecLoading = ref(false)
 const reniecNotice = ref('')
 const reniecError = ref('')
+const fileNames = ref({
+  foto_carnet: '',
+  constancia_estudios: ''
+})
 
 const form = ref({
   nombre: '',
   apellido: '',
   dni: '',
   email: '',
-  grado: ''
+  grado: '',
+  foto_carnet: '',
+  constancia_estudios: ''
 })
 
 const loadAlumnos = async () => {
@@ -214,15 +272,19 @@ const loadAlumnos = async () => {
 
     if (err) throw err
 
-    // Contar cursos por alumno
-    const { data: matriculasData } = await supabase
-      .from('matriculas')
-      .select('alumno_id')
-      .eq('estado', 'activa')
+    // Contar cursos por alumno usando las matrículas por período activas
+    const { data: matriculasData, error: mcErr } = await supabase
+      .from('matricula_cursos')
+      .select('id, matriculas_periodo!inner (alumno_id, estado)')
+      .eq('matriculas_periodo.estado', 'activa')
+
+    if (mcErr) throw mcErr
 
     const cursoCounts = {}
-    matriculasData?.forEach(m => {
-      cursoCounts[m.alumno_id] = (cursoCounts[m.alumno_id] || 0) + 1
+    matriculasData?.forEach((m) => {
+      const alumnoId = m.matriculas_periodo?.alumno_id
+      if (!alumnoId) return
+      cursoCounts[alumnoId] = (cursoCounts[alumnoId] || 0) + 1
     })
 
     alumnos.value = (alumnosData || []).map(a => ({
@@ -244,7 +306,13 @@ const editAlumno = (alumno) => {
     apellido: alumno.apellido,
     dni: alumno.dni || '',
     email: alumno.email,
-    grado: alumno.grado
+    grado: alumno.grado,
+    foto_carnet: alumno.foto_carnet || '',
+    constancia_estudios: alumno.constancia_estudios || ''
+  }
+  fileNames.value = {
+    foto_carnet: '',
+    constancia_estudios: ''
   }
   nameLocked.value = false
   reniecNotice.value = ''
@@ -285,9 +353,11 @@ const validateAlumnoForm = () => {
   const dni = form.value.dni.trim()
   const email = form.value.email.trim().toLowerCase()
   const gradoNumber = Number(form.value.grado)
+   const fotoCarnet = form.value.foto_carnet
+   const constancia = form.value.constancia_estudios
 
-  if (!nombre || !apellido || !dni || !email || !gradoNumber) {
-    error.value = 'Todos los campos son obligatorios.'
+  if (!nombre || !apellido || !dni || !email || !gradoNumber || !fotoCarnet || !constancia) {
+    error.value = 'Todos los campos y archivos son obligatorios.'
     return null
   }
 
@@ -301,7 +371,7 @@ const validateAlumnoForm = () => {
     return null
   }
 
-  return { nombre, apellido, dni, email, grado: gradoNumber }
+  return { nombre, apellido, dni, email, grado: gradoNumber, foto_carnet: fotoCarnet, constancia_estudios: constancia }
 }
 
 const saveAlumno = async () => {
@@ -349,7 +419,9 @@ const saveAlumno = async () => {
           apellido: payload.apellido,
           dni: payload.dni,
           email: payload.email,
-          grado: payload.grado
+          grado: payload.grado,
+          foto_carnet: payload.foto_carnet,
+          constancia_estudios: payload.constancia_estudios
         })
         .eq('id', editingAlumno.value.id)
 
@@ -415,6 +487,8 @@ const saveAlumno = async () => {
           dni: payload.dni,
           email: payload.email,
           grado: payload.grado,
+          foto_carnet: payload.foto_carnet,
+          constancia_estudios: payload.constancia_estudios,
           usuario_id: usuarioId
         }])
 
@@ -478,7 +552,13 @@ const closeModal = () => {
     apellido: '',
     dni: '',
     email: '',
-    grado: ''
+    grado: '',
+    foto_carnet: '',
+    constancia_estudios: ''
+  }
+  fileNames.value = {
+    foto_carnet: '',
+    constancia_estudios: ''
   }
   error.value = ''
   success.value = ''
@@ -517,4 +597,25 @@ const fetchReniecData = async () => {
     reniecLoading.value = false
   }
 }
+
+const onFileChange = (event, field) => {
+  const file = event.target.files?.[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = () => {
+    form.value[field] = reader.result
+    fileNames.value[field] = file.name
+  }
+  reader.onerror = () => {
+    error.value = 'No se pudo leer el archivo. Inténtalo nuevamente.'
+  }
+  reader.readAsDataURL(file)
+}
+
+const isImage = (value) => {
+  if (!value) return false
+  return value.startsWith('data:image') || value.match(/\.(png|jpg|jpeg|gif)$/i)
+}
+
 </script>

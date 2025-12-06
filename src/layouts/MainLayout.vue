@@ -31,6 +31,10 @@
             <i class="fas fa-user-graduate mr-2"></i> Alumnos
           </router-link>
           
+          <router-link v-if="authStore.isAdmin" to="/periodos" class="navbar-item">
+            <i class="fas fa-calendar-plus mr-2"></i> Periodos
+          </router-link>
+          
           <router-link v-if="authStore.isAdmin" to="/usuarios" class="navbar-item">
             <i class="fas fa-users-cog mr-2"></i> Usuarios
           </router-link>
@@ -96,4 +100,3 @@ onMounted(() => {
   authStore.init()
 })
 </script>
-

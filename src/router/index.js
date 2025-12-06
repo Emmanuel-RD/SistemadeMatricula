@@ -27,6 +27,12 @@ const routes = [
         meta: { requiresAuth: true, roles: ['admin', 'docente'] }
       },
       {
+        path: 'cursos/:id',
+        name: 'CursoDetalle',
+        component: () => import('@/views/CursoDetalle.vue'),
+        meta: { requiresAuth: true, roles: ['admin', 'docente'] }
+      },
+      {
         path: 'docentes',
         name: 'Docentes',
         component: () => import('@/views/Docentes.vue'),
@@ -36,6 +42,18 @@ const routes = [
         path: 'alumnos',
         name: 'Alumnos',
         component: () => import('@/views/Alumnos.vue'),
+        meta: { requiresAuth: true, roles: ['admin'] }
+      },
+      {
+        path: 'periodos',
+        name: 'Periodos',
+        component: () => import('@/views/Periodos.vue'),
+        meta: { requiresAuth: true, roles: ['admin'] }
+      },
+      {
+        path: 'alumnos/:id',
+        name: 'AlumnoDetalle',
+        component: () => import('@/views/AlumnoDetalle.vue'),
         meta: { requiresAuth: true, roles: ['admin'] }
       },
       {
@@ -120,4 +138,3 @@ router.beforeEach(async (to, from, next) => {
 })
 
 export default router
-

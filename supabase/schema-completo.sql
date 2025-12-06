@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS alumnos (
     dni VARCHAR(20) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     grado INTEGER NOT NULL CHECK (grado >= 1 AND grado <= 6),
+    foto_carnet TEXT,
+    constancia_estudios TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     CONSTRAINT alumnos_dni_formato CHECK (dni ~ '^[0-9]{8}$')
@@ -96,6 +98,82 @@ CREATE TABLE IF NOT EXISTS cursos (
     activo BOOLEAN DEFAULT true,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- =====================================================
+-- TABLA DE PERÍODOS
+-- =====================================================
+CREATE TABLE IF NOT EXISTS periodos (
+    id BIGSERIAL PRIMARY KEY,
+    nombre VARCHAR(150) NOT NULL,
+    anio INTEGER NOT NULL,
+    fecha_inicio DATE NOT NULL,
+    fecha_fin DATE NOT NULL,
+    estado VARCHAR(20) NOT NULL DEFAULT 'borrador' CHECK (estado IN ('borrador', 'abierto', 'cerrado')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- =====================================================
+-- TABLA DE MATRÍCULAS POR PERÍODO (una matrícula con múltiples cursos)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS matriculas_periodo (
+    id BIGSERIAL PRIMARY KEY,
+    alumno_id BIGINT NOT NULL REFERENCES alumnos(id) ON DELETE CASCADE,
+    periodo_id BIGINT NOT NULL REFERENCES periodos(id) ON DELETE RESTRICT,
+    grado INTEGER NOT NULL CHECK (grado >= 1 AND grado <= 6),
+    fecha_matricula TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    estado VARCHAR(20) NOT NULL DEFAULT 'activa' CHECK (estado IN ('activa', 'cancelada', 'finalizada')),
+    observaciones TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(alumno_id, periodo_id)
+);
+
+-- =====================================================
+-- TABLA PUENTE MATRÍCULA-CURSOS (con snapshots)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS matricula_cursos (
+    id BIGSERIAL PRIMARY KEY,
+    matricula_id BIGINT NOT NULL REFERENCES matriculas_periodo(id) ON DELETE CASCADE,
+    curso_id BIGINT NOT NULL REFERENCES cursos(id) ON DELETE RESTRICT,
+    curso_nombre_snapshot VARCHAR(200) NOT NULL,
+    docente_id_snapshot BIGINT,
+    docente_nombre_snapshot VARCHAR(200),
+    grado_snapshot INTEGER NOT NULL,
+    dia_semana_snapshot VARCHAR(20),
+    hora_inicio_snapshot TIME,
+    hora_fin_snapshot TIME,
+    capacidad_snapshot INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(matricula_id, curso_id)
+);
+
+-- =====================================================
+-- TABLA DE NOTAS POR BIMESTRE (referencia a matricula_cursos)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS notas (
+    id BIGSERIAL PRIMARY KEY,
+    matricula_curso_id BIGINT NOT NULL REFERENCES matricula_cursos(id) ON DELETE CASCADE,
+    bimestre SMALLINT NOT NULL CHECK (bimestre >= 1 AND bimestre <= 4),
+    nota NUMERIC(5,2) NOT NULL CHECK (nota >= 0 AND nota <= 20),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(matricula_curso_id, bimestre)
+);
+
+-- =====================================================
+-- TABLA DE ASISTENCIAS (referencia a matricula_cursos)
+-- =====================================================
+CREATE TABLE IF NOT EXISTS asistencias (
+    id BIGSERIAL PRIMARY KEY,
+    matricula_curso_id BIGINT NOT NULL REFERENCES matricula_cursos(id) ON DELETE CASCADE,
+    fecha DATE NOT NULL DEFAULT CURRENT_DATE,
+    presente BOOLEAN NOT NULL DEFAULT true,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(matricula_curso_id, fecha)
 );
 
 -- =====================================================
@@ -180,6 +258,15 @@ CREATE INDEX IF NOT EXISTS idx_cursos_activo ON cursos(activo);
 CREATE INDEX IF NOT EXISTS idx_matriculas_alumno ON matriculas(alumno_id);
 CREATE INDEX IF NOT EXISTS idx_matriculas_curso ON matriculas(curso_id);
 CREATE INDEX IF NOT EXISTS idx_matriculas_estado ON matriculas(estado);
+CREATE INDEX IF NOT EXISTS idx_periodos_estado ON periodos(estado);
+CREATE INDEX IF NOT EXISTS idx_periodos_anio ON periodos(anio);
+CREATE INDEX IF NOT EXISTS idx_matriculas_periodo_alumno ON matriculas_periodo(alumno_id);
+CREATE INDEX IF NOT EXISTS idx_matriculas_periodo_periodo ON matriculas_periodo(periodo_id);
+CREATE INDEX IF NOT EXISTS idx_matricula_cursos_curso ON matricula_cursos(curso_id);
+CREATE INDEX IF NOT EXISTS idx_notas_matricula_curso ON notas(matricula_curso_id);
+CREATE INDEX IF NOT EXISTS idx_notas_bimestre ON notas(bimestre);
+CREATE INDEX IF NOT EXISTS idx_asistencias_matricula_curso ON asistencias(matricula_curso_id);
+CREATE INDEX IF NOT EXISTS idx_asistencias_fecha ON asistencias(fecha);
 
 -- =====================================================
 -- FUNCIONES Y TRIGGERS
@@ -209,6 +296,50 @@ CREATE TRIGGER update_alumnos_updated_at BEFORE UPDATE ON alumnos
 
 CREATE TRIGGER update_cursos_updated_at BEFORE UPDATE ON cursos
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_notas_updated_at BEFORE UPDATE ON notas
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_asistencias_updated_at BEFORE UPDATE ON asistencias
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_matriculas_periodo_updated_at BEFORE UPDATE ON matriculas_periodo
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_matricula_cursos_updated_at BEFORE UPDATE ON matricula_cursos
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- Función para evitar cursos duplicados/solapados por grado en el mismo horario
+CREATE OR REPLACE FUNCTION validar_conflicto_curso_grado()
+RETURNS TRIGGER AS $$
+BEGIN
+    -- Validar que la hora de inicio sea menor que la hora fin
+    IF NEW.hora_inicio >= NEW.hora_fin THEN
+        RAISE EXCEPTION 'La hora de inicio debe ser menor que la hora de fin' USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Verificar traslape de horarios dentro del mismo grado y día
+    IF EXISTS (
+        SELECT 1 FROM cursos c
+        WHERE c.grado = NEW.grado
+          AND c.dia_semana = NEW.dia_semana
+          AND (TG_OP = 'INSERT' OR c.id <> NEW.id)
+          AND NOT (NEW.hora_fin <= c.hora_inicio OR NEW.hora_inicio >= c.hora_fin)
+    ) THEN
+        RAISE EXCEPTION 'Ya existe un curso para % grado que se cruza con el horario % - % el %',
+            NEW.grado, NEW.hora_inicio, NEW.hora_fin, NEW.dia_semana
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Validacion para evitar cursos duplicados por grado en el mismo horario
+DROP TRIGGER IF EXISTS validar_conflicto_curso_grado_trigger ON cursos;
+CREATE TRIGGER validar_conflicto_curso_grado_trigger
+    BEFORE INSERT OR UPDATE ON cursos
+    FOR EACH ROW
+    EXECUTE FUNCTION validar_conflicto_curso_grado();
 
 -- Función para validar horario de matrícula
 CREATE OR REPLACE FUNCTION validar_horario_matricula()
@@ -266,6 +397,60 @@ CREATE TRIGGER validar_grado_matricula_trigger
     BEFORE INSERT ON matriculas
     FOR EACH ROW
     EXECUTE FUNCTION validar_grado_matricula();
+
+-- Validación para capacidad y duplicidad de curso por alumno (cualquier periodo)
+CREATE OR REPLACE FUNCTION validar_matricula_curso()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_periodo_id BIGINT;
+    v_alumno_id BIGINT;
+    v_capacidad INTEGER;
+    v_inscritos INTEGER;
+BEGIN
+    SELECT periodo_id, alumno_id INTO v_periodo_id, v_alumno_id
+    FROM matriculas_periodo
+    WHERE id = NEW.matricula_id;
+
+    IF v_alumno_id IS NULL THEN
+        RAISE EXCEPTION 'Matrícula de período inválida' USING ERRCODE = 'foreign_key_violation';
+    END IF;
+
+    -- No permitir que un alumno se inscriba más de una vez al mismo curso (en cualquier período)
+    IF EXISTS (
+        SELECT 1
+        FROM matricula_cursos mc
+        JOIN matriculas_periodo mp ON mp.id = mc.matricula_id
+        WHERE mc.curso_id = NEW.curso_id
+          AND mp.alumno_id = v_alumno_id
+          AND (TG_OP = 'INSERT' OR mc.id <> NEW.id)
+    ) THEN
+        RAISE EXCEPTION 'El alumno ya está inscrito en este curso' USING ERRCODE = 'unique_violation';
+    END IF;
+
+    -- Validar capacidad por período
+    SELECT capacidad INTO v_capacidad FROM cursos WHERE id = NEW.curso_id;
+    IF v_capacidad IS NOT NULL THEN
+        SELECT COUNT(*) INTO v_inscritos
+        FROM matricula_cursos mc
+        JOIN matriculas_periodo mp ON mp.id = mc.matricula_id
+        WHERE mc.curso_id = NEW.curso_id
+          AND mp.periodo_id = v_periodo_id
+          AND mp.estado = 'activa';
+
+        IF v_inscritos >= v_capacidad THEN
+            RAISE EXCEPTION 'El curso ha alcanzado su capacidad para este período' USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS validar_matricula_curso_trigger ON matricula_cursos;
+CREATE TRIGGER validar_matricula_curso_trigger
+    BEFORE INSERT OR UPDATE ON matricula_cursos
+    FOR EACH ROW
+    EXECUTE FUNCTION validar_matricula_curso();
 
 -- Función para crear hash de contraseña
 CREATE OR REPLACE FUNCTION crear_usuario_con_password(
@@ -337,6 +522,11 @@ ALTER TABLE docentes ENABLE ROW LEVEL SECURITY;
 ALTER TABLE alumnos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE cursos ENABLE ROW LEVEL SECURITY;
 ALTER TABLE matriculas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE notas ENABLE ROW LEVEL SECURITY;
+ALTER TABLE asistencias ENABLE ROW LEVEL SECURITY;
+ALTER TABLE periodos ENABLE ROW LEVEL SECURITY;
+ALTER TABLE matriculas_periodo ENABLE ROW LEVEL SECURITY;
+ALTER TABLE matricula_cursos ENABLE ROW LEVEL SECURITY;
 
 -- =====================================================
 -- POLÍTICAS RLS
@@ -402,6 +592,51 @@ CREATE POLICY "matriculas_insert_all" ON matriculas
 DROP POLICY IF EXISTS "matriculas_update_all" ON matriculas;
 CREATE POLICY "matriculas_update_all" ON matriculas
     FOR UPDATE USING (true);
+
+-- Políticas para NOTAS
+DROP POLICY IF EXISTS "notas_select_all" ON notas;
+CREATE POLICY "notas_select_all" ON notas
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "notas_modify_all" ON notas;
+CREATE POLICY "notas_modify_all" ON notas
+    FOR ALL USING (true);
+
+-- Políticas para ASISTENCIAS
+DROP POLICY IF EXISTS "asistencias_select_all" ON asistencias;
+CREATE POLICY "asistencias_select_all" ON asistencias
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "asistencias_modify_all" ON asistencias;
+CREATE POLICY "asistencias_modify_all" ON asistencias
+    FOR ALL USING (true);
+
+-- Políticas para PERIODOS
+DROP POLICY IF EXISTS "periodos_select_all" ON periodos;
+CREATE POLICY "periodos_select_all" ON periodos
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "periodos_modify_all" ON periodos;
+CREATE POLICY "periodos_modify_all" ON periodos
+    FOR ALL USING (true);
+
+-- Políticas para MATRICULAS_PERIODO
+DROP POLICY IF EXISTS "matriculas_periodo_select_all" ON matriculas_periodo;
+CREATE POLICY "matriculas_periodo_select_all" ON matriculas_periodo
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "matriculas_periodo_modify_all" ON matriculas_periodo;
+CREATE POLICY "matriculas_periodo_modify_all" ON matriculas_periodo
+    FOR ALL USING (true);
+
+-- Políticas para MATRICULA_CURSOS
+DROP POLICY IF EXISTS "matricula_cursos_select_all" ON matricula_cursos;
+CREATE POLICY "matricula_cursos_select_all" ON matricula_cursos
+    FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "matricula_cursos_modify_all" ON matricula_cursos;
+CREATE POLICY "matricula_cursos_modify_all" ON matricula_cursos
+    FOR ALL USING (true);
 
 -- =====================================================
 -- VISTAS ÚTILES
@@ -489,3 +724,5 @@ COMMENT ON TABLE docentes IS 'Información de docentes vinculada a usuarios';
 COMMENT ON TABLE alumnos IS 'Información de alumnos vinculada a usuarios';
 COMMENT ON TABLE cursos IS 'Cursos disponibles en el sistema';
 COMMENT ON TABLE matriculas IS 'Matrículas de alumnos en cursos';
+COMMENT ON TABLE notas IS 'Notas por bimestre de cada alumno en un curso';
+COMMENT ON TABLE asistencias IS 'Asistencias por alumno en cada curso y fecha';
