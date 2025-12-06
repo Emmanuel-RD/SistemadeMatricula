@@ -56,10 +56,12 @@ CREATE TABLE IF NOT EXISTS docentes (
     usuario_id UUID REFERENCES usuarios(id) ON DELETE CASCADE,
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
+    dni VARCHAR(20) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     telefono VARCHAR(20),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT docentes_dni_formato CHECK (dni ~ '^[0-9]{8}$')
 );
 
 -- =====================================================
@@ -70,11 +72,12 @@ CREATE TABLE IF NOT EXISTS alumnos (
     usuario_id UUID REFERENCES usuarios(id) ON DELETE CASCADE,
     nombre VARCHAR(100) NOT NULL,
     apellido VARCHAR(100) NOT NULL,
-    dni VARCHAR(20) UNIQUE,
+    dni VARCHAR(20) UNIQUE NOT NULL,
     email VARCHAR(255) UNIQUE NOT NULL,
     grado INTEGER NOT NULL CHECK (grado >= 1 AND grado <= 6),
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    CONSTRAINT alumnos_dni_formato CHECK (dni ~ '^[0-9]{8}$')
 );
 
 -- =====================================================
@@ -108,6 +111,57 @@ CREATE TABLE IF NOT EXISTS matriculas (
 );
 
 -- =====================================================
+-- AJUSTES DE DNI PARA TABLAS EXISTENTES
+-- =====================================================
+
+-- Asegurar columna y restricciones en DOCENTES
+ALTER TABLE IF EXISTS docentes ADD COLUMN IF NOT EXISTS dni VARCHAR(20);
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'docentes' AND constraint_name = 'docentes_dni_key'
+    ) THEN
+        ALTER TABLE docentes ADD CONSTRAINT docentes_dni_key UNIQUE (dni);
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'docentes' AND constraint_name = 'docentes_dni_formato'
+    ) THEN
+        ALTER TABLE docentes ADD CONSTRAINT docentes_dni_formato CHECK (dni ~ '^[0-9]{8}$');
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM docentes WHERE dni IS NULL OR dni = '') THEN
+        RAISE EXCEPTION 'Complete los DNI de docentes antes de aplicar NOT NULL';
+    END IF;
+    ALTER TABLE docentes ALTER COLUMN dni SET NOT NULL;
+END $$;
+
+-- Asegurar restricciones en ALUMNOS
+ALTER TABLE IF EXISTS alumnos ALTER COLUMN dni TYPE VARCHAR(20);
+
+DO $$ BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.table_constraints
+        WHERE table_name = 'alumnos' AND constraint_name = 'alumnos_dni_formato'
+    ) THEN
+        ALTER TABLE alumnos ADD CONSTRAINT alumnos_dni_formato CHECK (dni ~ '^[0-9]{8}$');
+    END IF;
+END $$;
+
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM alumnos WHERE dni IS NULL OR dni = '') THEN
+        RAISE EXCEPTION 'Complete los DNI de alumnos antes de aplicar NOT NULL';
+    END IF;
+    ALTER TABLE alumnos ALTER COLUMN dni SET NOT NULL;
+END $$;
+
+-- =====================================================
 -- ÍNDICES PARA MEJORAR RENDIMIENTO
 -- =====================================================
 CREATE INDEX IF NOT EXISTS idx_usuarios_email ON usuarios(email);
@@ -118,6 +172,7 @@ CREATE INDEX IF NOT EXISTS idx_alumnos_email ON alumnos(email);
 CREATE INDEX IF NOT EXISTS idx_alumnos_grado ON alumnos(grado);
 CREATE INDEX IF NOT EXISTS idx_alumnos_dni ON alumnos(dni);
 CREATE INDEX IF NOT EXISTS idx_docentes_usuario ON docentes(usuario_id);
+CREATE INDEX IF NOT EXISTS idx_docentes_dni ON docentes(dni);
 CREATE INDEX IF NOT EXISTS idx_docentes_email ON docentes(email);
 CREATE INDEX IF NOT EXISTS idx_cursos_docente ON cursos(docente_id);
 CREATE INDEX IF NOT EXISTS idx_cursos_grado ON cursos(grado);
@@ -434,4 +489,3 @@ COMMENT ON TABLE docentes IS 'Información de docentes vinculada a usuarios';
 COMMENT ON TABLE alumnos IS 'Información de alumnos vinculada a usuarios';
 COMMENT ON TABLE cursos IS 'Cursos disponibles en el sistema';
 COMMENT ON TABLE matriculas IS 'Matrículas de alumnos en cursos';
-

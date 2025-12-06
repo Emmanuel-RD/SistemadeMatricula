@@ -120,6 +120,7 @@
                   maxlength="8"
                   inputmode="numeric"
                   pattern="\\d*"
+                  required
                 />
               </div>
               <div class="control">
@@ -278,6 +279,31 @@ const generatePassword = () => {
   return password
 }
 
+const validateAlumnoForm = () => {
+  const nombre = form.value.nombre.trim()
+  const apellido = form.value.apellido.trim()
+  const dni = form.value.dni.trim()
+  const email = form.value.email.trim().toLowerCase()
+  const gradoNumber = Number(form.value.grado)
+
+  if (!nombre || !apellido || !dni || !email || !gradoNumber) {
+    error.value = 'Todos los campos son obligatorios.'
+    return null
+  }
+
+  if (!/^[0-9]{8}$/.test(dni)) {
+    error.value = 'El DNI debe tener 8 dígitos numéricos.'
+    return null
+  }
+
+  if (!Number.isInteger(gradoNumber) || gradoNumber < 1 || gradoNumber > 6) {
+    error.value = 'El grado debe estar entre 1 y 6.'
+    return null
+  }
+
+  return { nombre, apellido, dni, email, grado: gradoNumber }
+}
+
 const saveAlumno = async () => {
   saving.value = true
   error.value = ''
@@ -285,14 +311,58 @@ const saveAlumno = async () => {
   reniecError.value = ''
 
   try {
+    const payload = validateAlumnoForm()
+    if (!payload) {
+      saving.value = false
+      return
+    }
+
     if (editingAlumno.value) {
-      // Solo actualizar datos
+      // Actualizar datos en usuario y alumno
+      if (editingAlumno.value.usuario_id) {
+        const { error: usuarioErr } = await supabase
+          .from('usuarios')
+          .update({
+            nombre: payload.nombre,
+            apellido: payload.apellido,
+            dni: payload.dni,
+            email: payload.email
+          })
+          .eq('id', editingAlumno.value.usuario_id)
+
+        if (usuarioErr) {
+          const lowerMessage = usuarioErr.message.toLowerCase()
+          if (lowerMessage.includes('dni')) {
+            throw new Error('El DNI ya está registrado en otro usuario')
+          }
+          if (lowerMessage.includes('email')) {
+            throw new Error('El email ya está registrado en el sistema')
+          }
+          throw usuarioErr
+        }
+      }
+
       const { error: err } = await supabase
         .from('alumnos')
-        .update(form.value)
+        .update({
+          nombre: payload.nombre,
+          apellido: payload.apellido,
+          dni: payload.dni,
+          email: payload.email,
+          grado: payload.grado
+        })
         .eq('id', editingAlumno.value.id)
 
-      if (err) throw err
+      if (err) {
+        const lowerMessage = err.message.toLowerCase()
+        if (lowerMessage.includes('dni')) {
+          throw new Error('El DNI ya está registrado en otro alumno')
+        }
+        if (lowerMessage.includes('email')) {
+          throw new Error('El email ya está registrado en el sistema')
+        }
+        throw err
+      }
       success.value = 'Alumno actualizado exitosamente'
     } else {
       // Crear nuevo alumno con usuario
@@ -311,18 +381,24 @@ const saveAlumno = async () => {
 
       // Crear usuario usando la función RPC
       const { data: usuarioId, error: usuarioError } = await supabase.rpc('crear_usuario_con_password', {
-        p_email: form.value.email,
+        p_email: payload.email,
         p_password: password,
         p_rol_id: rolData.id,
-        p_nombre: form.value.nombre,
-        p_apellido: form.value.apellido,
-        p_dni: form.value.dni || null,
+        p_nombre: payload.nombre,
+        p_apellido: payload.apellido,
+        p_dni: payload.dni,
         p_telefono: null
       })
 
       if (usuarioError) {
         // Si el usuario ya existe
-        if (usuarioError.message.includes('duplicate') || usuarioError.message.includes('unique')) {
+        const lowerMessage = usuarioError.message.toLowerCase()
+        if (lowerMessage.includes('dni')) {
+          error.value = 'El DNI ya está registrado en el sistema'
+          saving.value = false
+          return
+        }
+        if (lowerMessage.includes('duplicate') || lowerMessage.includes('unique') || lowerMessage.includes('email')) {
           error.value = 'El email ya está registrado en el sistema'
           saving.value = false
           return
@@ -334,7 +410,11 @@ const saveAlumno = async () => {
       const { error: err } = await supabase
         .from('alumnos')
         .insert([{
-          ...form.value,
+          nombre: payload.nombre,
+          apellido: payload.apellido,
+          dni: payload.dni,
+          email: payload.email,
+          grado: payload.grado,
           usuario_id: usuarioId
         }])
 
@@ -343,23 +423,34 @@ const saveAlumno = async () => {
         if (usuarioId) {
           await supabase.from('usuarios').delete().eq('id', usuarioId)
         }
+        const lowerMessage = err.message.toLowerCase()
+        if (lowerMessage.includes('dni')) {
+          error.value = 'El DNI ya está registrado en el sistema'
+          saving.value = false
+          return
+        }
+        if (lowerMessage.includes('email')) {
+          error.value = 'El email ya está registrado en el sistema'
+          saving.value = false
+          return
+        }
         throw err
       }
 
       // Enviar email con credenciales
       try {
         await emailService.sendCredentials(
-          form.value.email,
+          payload.email,
           password,
-          form.value.nombre,
-          form.value.apellido,
+          payload.nombre,
+          payload.apellido,
           'alumno'
         )
-        success.value = `Alumno creado exitosamente. Las credenciales han sido enviadas al correo: ${form.value.email}`
+        success.value = `Alumno creado exitosamente. Las credenciales han sido enviadas al correo: ${payload.email}`
       } catch (emailErr) {
         console.warn('Error al enviar email:', emailErr)
         // Mostrar credenciales de todas formas
-        alert(`✅ Alumno creado exitosamente\n\n📧 Email: ${form.value.email}\n🔑 Contraseña: ${password}\n\n⚠️ No se pudo enviar el email automáticamente. Por favor, guarda estas credenciales y envíalas manualmente al usuario.`)
+        alert(`✅ Alumno creado exitosamente\n\n📧 Email: ${payload.email}\n🔑 Contraseña: ${password}\n\n⚠️ No se pudo enviar el email automáticamente. Por favor, guarda estas credenciales y envíalas manualmente al usuario.`)
         success.value = 'Alumno creado exitosamente. Revisa las credenciales mostradas.'
       }
     }
@@ -407,7 +498,7 @@ const fetchReniecData = async () => {
   reniecNotice.value = ''
 
   try {
-    const { success, data, error: reniecErr } = await reniecService.fetchByDni(form.value.dni)
+    const { success, data, error: reniecErr } = await reniecService.fetchByDni(form.value.dni.trim())
 
     if (!success) {
       reniecError.value = reniecErr || 'No se encontraron datos para el DNI ingresado.'

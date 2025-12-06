@@ -7,13 +7,13 @@
 const EMAIL_CONFIG = {
   // Opción 1: EmailJS (gratis, fácil de configurar)
   // https://www.emailjs.com/
-  useEmailJS: false,
-  emailJSServiceID: '',
-  emailJSTemplateID: '',
-  emailJSPublicKey: '',
+  useEmailJS: true,
+  emailJSServiceID: 'service_vofmuol',
+  emailJSTemplateID: 'template_nyot8i9',
+  emailJSPublicKey: 'l_j8Sou5xMy0SluyF',
 
-  // Opción 2: API personalizada
-  useCustomAPI: true,
+  // Opción 2: API personalizadass
+  useCustomAPI: false,
   customAPIEndpoint: '/api/send-email', // Cambiar por tu endpoint
 
   // Opción 3: Resend, SendGrid, etc. (requiere backend)
